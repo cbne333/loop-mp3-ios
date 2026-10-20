@@ -1,0 +1,60 @@
+name: Check iOS build
+
+# Manual runs let the owner check their Actions billing before starting a macOS job.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Download source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Test repeat order
+        run: swift test
+
+      - name: Build for iPhone simulator
+        run: |
+          xcodebuild \
+            -project LoopMP3.xcodeproj \
+            -scheme LoopMP3 \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/LoopMP3DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Check background audio setting in built app
+        run: |
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import plistlib
+          app = pathlib.Path(os.environ["RUNNER_TEMP"]) / "LoopMP3DerivedData/Build/Products/Debug-iphonesimulator/LoopMP3.app"
+          with (app / "Info.plist").open("rb") as file:
+              info = plistlib.load(file)
+          assert "audio" in info.get("UIBackgroundModes", []), "Missing background audio setting"
+          print("Background audio setting exists. Playback still requires physical-device testing.")
+          PY
+
+      - name: Explain next step
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Build check only
+          Repeat-order tests and an unsigned iPhone simulator build have passed.
+          This does not install the app on an iPhone or verify playback with the screen locked.
+          See WINDOWS-INSTALL.md for signing, TestFlight, and physical-device testing.
+          EOF

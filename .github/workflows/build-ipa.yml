@@ -1,0 +1,81 @@
+name: Build IPA for free sideloading
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Download source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Show toolchain
+        run: xcodebuild -version
+
+      - name: Test repeat order
+        run: swift test
+
+      - name: Build unsigned iPhone app
+        run: |
+          xcodebuild \
+            -project LoopMP3.xcodeproj \
+            -scheme LoopMP3 \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/LoopMP3Device" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package and inspect unsigned IPA
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/LoopMP3Device/Build/Products/Release-iphoneos/LoopMP3.app"
+          test -f "$app/LoopMP3"
+          xcrun lipo -verify_arch arm64 "$app/LoopMP3"
+          mkdir -p "$RUNNER_TEMP/LoopMP3Package/Payload"
+          ditto "$app" "$RUNNER_TEMP/LoopMP3Package/Payload/LoopMP3.app"
+          cd "$RUNNER_TEMP/LoopMP3Package"
+          ditto -c -k --keepParent Payload LoopMP3-unsigned.ipa
+          python3 - <<'PY'
+          import plistlib
+          import zipfile
+          with zipfile.ZipFile("LoopMP3-unsigned.ipa") as archive:
+              assert archive.testzip() is None, "Corrupt IPA"
+              info = plistlib.loads(archive.read("Payload/LoopMP3.app/Info.plist"))
+              assert "audio" in info.get("UIBackgroundModes", [])
+              assert info["CFBundleSupportedPlatforms"] == ["iPhoneOS"]
+              assert "Payload/LoopMP3.app/" + info["CFBundleExecutable"] in archive.namelist()
+          print("iPhone IPA structure and background audio setting checked.")
+          PY
+
+      - name: Save unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: LoopMP3-unsigned-IPA
+          path: ${{ runner.temp }}/LoopMP3Package/LoopMP3-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Installation instructions
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Download and install from Windows
+          Download the LoopMP3-unsigned-IPA artifact and extract its ZIP.
+          Import LoopMP3-unsigned.ipa into Sideloadly on your Windows PC.
+          Sideloadly signs it locally using your Apple account before installation.
+          Do not put your Apple password or signing keys in this repository.
+          Free-account signing expires after 7 days and needs refreshing.
+          This build does not verify actual playback on a locked iPhone.
+          See WINDOWS-INSTALL.md for the full steps and free-usage conditions.
+          EOF
