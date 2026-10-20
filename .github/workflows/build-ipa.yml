@@ -41,7 +41,7 @@ jobs:
           set -euo pipefail
           app="$RUNNER_TEMP/LoopMP3Device/Build/Products/Release-iphoneos/LoopMP3.app"
           test -f "$app/LoopMP3"
-          xcrun lipo -verify_arch arm64 "$app/LoopMP3"
+          xcrun lipo "$app/LoopMP3" -verify_arch arm64
           mkdir -p "$RUNNER_TEMP/LoopMP3Package/Payload"
           ditto "$app" "$RUNNER_TEMP/LoopMP3Package/Payload/LoopMP3.app"
           cd "$RUNNER_TEMP/LoopMP3Package"
